@@ -6,7 +6,7 @@ Env vars required:
   TELEGRAM_BOT_TOKEN  — from BotFather
   TELEGRAM_CHAT_ID    — your Telegram user/group ID
   DB_PATH             — optional, default /app/data/sent_listings.db
-  SEARCH_URL_1, SEARCH_URL_2, ...  — search URLs (run `python seloger_params.py` to generate)
+  SEARCH_URL_1, SEARCH_URL_2, ...  — Seloger search URLs (copy from browser after searching)
 """
 import os
 import re
@@ -54,8 +54,8 @@ SEARCH_URLS = _load_search_urls()
 if not SEARCH_URLS:
     sys.exit(
         "No search URLs configured. "
-        "Run `python seloger_params.py` to generate them, "
-        "then set SEARCH_URL_1, SEARCH_URL_2, ... in .env or environment."
+        "Set SEARCH_URL_1, SEARCH_URL_2, ... in .env — "
+        "paste your Seloger search URLs (copy from browser after searching)."
     )
 
 _ESTATE_LABELS: dict[str, tuple[str, str]] = {
@@ -425,7 +425,7 @@ def main():
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    logger.info("Notifier run started (degree=12, 1st+2nd degree communes)")
+    logger.info("Notifier run started — %d search URL(s)", len(SEARCH_URLS))
 
     conn = init_db()
     scraper = cloudscraper.create_scraper(

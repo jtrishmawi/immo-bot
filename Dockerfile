@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY notifier.py seloger_params.py scheduler.py ./
+COPY notifier.py seloger.py scheduler.py ./
 
 RUN mkdir -p /app/data
 
