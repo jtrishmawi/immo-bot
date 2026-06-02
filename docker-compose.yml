@@ -1,0 +1,21 @@
+services:
+  notifier:
+    image: ghcr.io/jtrishmawi/immo-bot:latest
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - DB_PATH=${DB_PATH:-/app/data/sent_listings.db}
+      - DEBUG=${DEBUG:-false}
+      - SEARCH_URL_1=${SEARCH_URL_1:-}
+      - SEARCH_URL_2=${SEARCH_URL_2:-}
+      # Add SEARCH_URL_3 etc. for additional searches
+    volumes:
+      - notifier_data:/app/data
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+
+volumes:
+  notifier_data:
