@@ -2,8 +2,13 @@ services:
   notifier:
     image: ghcr.io/jtrishmawi/immo-bot:latest
     environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      # Telegram (optional if WhatsApp is configured)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      # WhatsApp via Baileys sidecar (optional if Telegram is configured)
+      - WHATSAPP_SERVICE_URL=http://whatsapp:3000
+      - WHATSAPP_TO=${WHATSAPP_TO:-}
+      - WHATSAPP_PHONE=${WHATSAPP_PHONE:-}
       - DB_PATH=${DB_PATH:-/app/data/sent_listings.db}
       - DEBUG=${DEBUG:-false}
       - SEARCH_URL_1=${SEARCH_URL_1:-}
@@ -11,11 +16,21 @@ services:
       # Add SEARCH_URL_3 etc. for additional searches
     volumes:
       - notifier_data:/app/data
+    depends_on:
+      - whatsapp
     deploy:
       restart_policy:
         condition: on-failure
         delay: 10s
         max_attempts: 3
+
+  whatsapp:
+    build: ./baileys-service
+    environment:
+      - WHATSAPP_PHONE=${WHATSAPP_PHONE:-}
+    volumes:
+      - notifier_data:/app/data
+    restart: on-failure
 
 volumes:
   notifier_data:

@@ -10,8 +10,9 @@ os.environ.setdefault("SEARCH_URL_1", (
     "&locations=AD08FR31096,AD08FR36623"
 ))
 
-from seloger import parse_url, build_url, BASE_URL
-from notifier import build_criteria, _load_search_urls, _label_from_params, _pending_search, SEARCH_URLS
+from immo_bot.scrapers.seloger import parse_url, build_url, BASE_URL
+from immo_bot.core import build_criteria, _load_search_urls, _label_from_params, SEARCH_URLS
+from immo_bot.platforms.telegram import _pending_search
 
 _PARAMS = {
     "distributionTypes": "Rent",

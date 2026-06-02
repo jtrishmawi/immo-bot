@@ -1,0 +1,10 @@
+{
+  "name": "immo-bot-whatsapp",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "@hapi/boom": "^10",
+    "express": "^4"
+  }
+}

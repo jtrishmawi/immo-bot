@@ -21,13 +21,3 @@ def build_url(query: dict) -> str:
         raise ValueError("query is required.")
     qs = "&".join(f"{k}={quote(v, safe=',')}" for k, v in query.items())
     return f"{BASE_URL}?{qs}"
-
-
-if __name__ == "__main__":
-    import sys
-    import json
-    if len(sys.argv) < 2:
-        print("Usage: python seloger.py <seloger_url>")
-        print("       Parses a Seloger search URL and prints the query fields as JSON.")
-    else:
-        print(json.dumps(parse_url(sys.argv[1]), indent=2, ensure_ascii=False))

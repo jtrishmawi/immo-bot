@@ -5,3 +5,4 @@ __pycache__/
 *.db
 .venv/
 location_codes.json
+baileys-service/node_modules/

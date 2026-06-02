@@ -1,4 +1,4 @@
-.PHONY: setup run dev schedule clean
+.PHONY: setup run dev schedule test clean
 
 ifeq ($(OS),Windows_NT)
   PS = powershell -ExecutionPolicy Bypass -NoProfile -File tasks.ps1
@@ -15,6 +15,9 @@ dev:
 schedule:
 	$(PS) schedule
 
+test:
+	$(PS) test
+
 clean:
 	$(PS) clean
 
@@ -27,15 +30,18 @@ setup:
 	$(PYTHON) -m pip install -r requirements.txt
 
 run:
-	$(PYTHON) notifier.py
+	$(PYTHON) -m immo_bot.core
 
 dev:
-	DEBUG=true $(PYTHON) notifier.py
+	DEBUG=true $(PYTHON) -m immo_bot.core
 
 schedule:
-	$(PYTHON) scheduler.py
+	$(PYTHON) -m immo_bot.scheduler
+
+test:
+	$(PYTHON) -m pytest tests/ -v
 
 clean:
-	rm -rf .venv __pycache__ *.pyc
+	rm -rf .venv __pycache__ immo_bot/__pycache__ immo_bot/**/__pycache__ *.pyc
 
 endif
