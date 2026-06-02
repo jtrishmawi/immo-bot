@@ -34,7 +34,13 @@ if __name__ == "__main__":
     logger.info("Telegram command polling started")
 
     now = datetime.now(ZoneInfo("Europe/Paris")).strftime("%d/%m/%Y à %H:%M")
-    notifier.send(scraper, f"✅ <b>immo-bot démarré</b> — {now}\nProchain run à la prochaine heure pile (08h-22h)\nEnvoyez /health pour vérifier l'état du service")
+    notifier.send(scraper, (
+        f"✅ <b>immo-bot démarré</b> — {now}\n"
+        f"Prochain run à la prochaine heure pile (08h-22h)\n\n"
+        f"Commandes disponibles :\n"
+        f"/health — état du service et dernier run\n"
+        f"/search — lancer une recherche immédiatement"
+    ))
 
     logger.info("Scheduler started — notifier runs hourly 08:00-22:00 Paris time")
     scheduler.start()
