@@ -397,9 +397,10 @@ def _run_on_demand_search(scraper, text: str, chat_id: str) -> None:
     try:
         items = _collect_all_items(scraper, build_criteria(query), label)
         new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+        already_seen = len(items) - len(new_items)
         sent = _send_new_listings(scraper, conn, new_items, label)
         if not new_items:
-            send(scraper, f"ℹ️ Aucune nouvelle annonce pour <b>{label}</b>.")
+            send(scraper, f"ℹ️ Aucune nouvelle annonce pour <b>{label}</b> ({already_seen} déjà vues).")
         _run_state["last_run_at"] = datetime.now(ZoneInfo("Europe/Paris"))
         _run_state["last_run_sent"] = sent
     finally:

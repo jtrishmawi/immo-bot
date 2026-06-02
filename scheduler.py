@@ -42,5 +42,6 @@ if __name__ == "__main__":
         f"/search — lancer une recherche immédiatement"
     ))
 
-    logger.info("Scheduler started — notifier runs hourly 08:00-22:00 Paris time")
+    logger.info("Scheduler started — running initial search then hourly 08:00-22:00 Paris time")
+    notifier.main()
     scheduler.start()
