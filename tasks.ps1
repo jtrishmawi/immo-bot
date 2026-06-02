@@ -34,6 +34,14 @@ switch ($Task) {
         Check-Venv
         & $PYTHON scheduler.py
     }
+    "search" {
+        Check-Venv
+        if (-not $args[0]) {
+            Write-Host "Usage: .\tasks.ps1 search <seloger_url>" -ForegroundColor Red
+            exit 1
+        }
+        & $PYTHON notifier.py $args[0]
+    }
     "clean" {
         Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue
         Remove-Item -Recurse -Force __pycache__ -ErrorAction SilentlyContinue
@@ -41,10 +49,11 @@ switch ($Task) {
     }
     default {
         Write-Host "Usage: .\tasks.ps1 <command>" -ForegroundColor Yellow
-        Write-Host "  setup     - create venv and install dependencies"
-        Write-Host "  run       - run notifier once"
-        Write-Host "  dev       - run notifier once (DEBUG mode)"
-        Write-Host "  schedule  - start hourly scheduler 08h-22h"
-        Write-Host "  clean     - remove venv"
+        Write-Host "  setup          - create venv and install dependencies"
+        Write-Host "  run            - run notifier once (uses SEARCH_URL_n from .env)"
+        Write-Host "  dev            - run notifier once (DEBUG mode)"
+        Write-Host "  schedule       - start hourly scheduler 08h-22h"
+        Write-Host "  search <url>   - force a one-off search for a specific URL"
+        Write-Host "  clean          - remove venv"
     }
 }

@@ -477,4 +477,14 @@ def main():
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="immo-bot notifier")
+    parser.add_argument(
+        "url", nargs="?", default=None,
+        help="Force a one-off search for this URL (overrides SEARCH_URL_n env vars)",
+    )
+    args = parser.parse_args()
+    if args.url:
+        SEARCH_URLS.clear()
+        SEARCH_URLS.append(args.url)
     main()
