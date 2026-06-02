@@ -97,6 +97,8 @@ The per-search summary message is only sent when there are new listings **or** `
 
 On first run without a session, the Baileys sidecar calls `requestPairingCode(WHATSAPP_PHONE)` and logs the 8-digit code to stdout. User runs `docker compose logs -f whatsapp` to get it. Session is persisted in the shared `notifier_data` volume.
 
+**Important (`baileys-service/index.js`):** `requestPairingCode` must be called **outside** the `connection.update` event handler, after a short delay (`setTimeout 5s`), so the socket finishes its handshake with WhatsApp servers first. Calling it inside the event handler causes "unable to connect" on the phone.
+
 ---
 
 ## What lives where
