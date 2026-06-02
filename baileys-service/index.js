@@ -12,20 +12,32 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import express from "express";
-import { mkdir } from "fs/promises";
+import { mkdir, rm } from "fs/promises";
 
 const PHONE       = process.env.WHATSAPP_PHONE;
 const SESSION_DIR = "/app/data/whatsapp-session";
 const PORT        = parseInt(process.env.PORT ?? "3000", 10);
 
-let sock   = null;
-let status = "disconnected"; // connected | pairing_pending | disconnected
+let sock           = null;
+let status         = "disconnected"; // connected | pairing_pending | disconnected
+let abortPairing   = false;          // set true when connection closes before pairing completes
 
 function toJid(number) {
     return number.replace(/^\+/, "") + "@s.whatsapp.net";
 }
 
+async function clearSession() {
+    try {
+        await rm(SESSION_DIR, { recursive: true, force: true });
+        await mkdir(SESSION_DIR, { recursive: true });
+        console.log("[whatsapp] Session cleared");
+    } catch (err) {
+        console.error("[whatsapp] Failed to clear session:", err.message);
+    }
+}
+
 async function connect() {
+    abortPairing = false;
     await mkdir(SESSION_DIR, { recursive: true });
 
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
@@ -47,10 +59,15 @@ async function connect() {
             return;
         }
         if (connection === "close") {
-            status = "disconnected";
-            const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
+            status       = "disconnected";
+            abortPairing = true;  // cancel any pending pairing request
+            const code   = new Boom(lastDisconnect?.error)?.output?.statusCode;
+
             if (code === DisconnectReason.loggedOut) {
-                console.log("[whatsapp] Logged out — delete session to re-pair");
+                // Session rejected — clear it and reconnect to get a fresh pairing code
+                console.log("[whatsapp] Logged out — clearing session and reconnecting…");
+                await clearSession();
+                setTimeout(connect, 2_000);
             } else {
                 console.log("[whatsapp] Connection closed, reconnecting in 5s…");
                 setTimeout(connect, 5_000);
@@ -58,11 +75,16 @@ async function connect() {
         }
     });
 
-    // Request pairing code outside the event handler, once socket is initialised
+    // Request pairing code outside the event handler, once socket has finished its
+    // handshake with WA servers. Calling it inside connection.update causes
+    // "unable to connect" on the phone.
     if (!state.creds.registered && PHONE) {
         status = "pairing_pending";
-        // Give the socket time to complete its handshake with WA servers
         await new Promise(r => setTimeout(r, 5_000));
+        if (abortPairing) {
+            console.log("[whatsapp] Pairing aborted — connection closed before code could be requested");
+            return;
+        }
         try {
             const code = await sock.requestPairingCode(PHONE);
             console.log(`\n[whatsapp] Pairing code: ${code}\n`);
