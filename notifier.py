@@ -366,8 +366,48 @@ def send_health(scraper) -> None:
     send(scraper, f"✅ <b>immo-bot actif</b> depuis {started}\nDernier run : {last} — {sent} annonce(s)")
 
 
+_pending_search: dict = {}  # chat_id -> "awaiting_selection"
+
+
+def _send_search_menu(scraper) -> None:
+    lines = ["🔍 <b>Quelle recherche lancer ?</b>"]
+    for i, url in enumerate(SEARCH_URLS, 1):
+        label, icon = _label_from_params(parse_url(url))
+        lines.append(f"{i}. {icon} {label}")
+    lines.append("\nRépondez avec le numéro.")
+    send(scraper, "\n".join(lines))
+
+
+def _run_on_demand_search(scraper, text: str, chat_id: str) -> None:
+    _pending_search.pop(chat_id, None)
+    try:
+        idx = int(text.strip()) - 1
+    except ValueError:
+        return
+    if idx < 0 or idx >= len(SEARCH_URLS):
+        send(scraper, f"Numéro invalide (1–{len(SEARCH_URLS)}).")
+        return
+
+    url = SEARCH_URLS[idx]
+    query = parse_url(url)
+    label, icon = _label_from_params(query)
+    send(scraper, f"🔄 Recherche {icon} <b>{label}</b> en cours…")
+
+    conn = init_db()
+    try:
+        items = _collect_all_items(scraper, build_criteria(query), label)
+        new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+        sent = _send_new_listings(scraper, conn, new_items, label)
+        if not new_items:
+            send(scraper, f"ℹ️ Aucune nouvelle annonce pour <b>{label}</b>.")
+        _run_state["last_run_at"] = datetime.now(ZoneInfo("Europe/Paris"))
+        _run_state["last_run_sent"] = sent
+    finally:
+        conn.close()
+
+
 def poll_commands(scraper) -> None:
-    """Background thread: long-poll Telegram getUpdates and respond to /health."""
+    """Background thread: long-poll Telegram getUpdates and handle bot commands."""
     offset = 0
     while True:
         try:
@@ -381,9 +421,17 @@ def poll_commands(scraper) -> None:
                 continue
             for update in r.json().get("result", []):
                 offset = update["update_id"] + 1
-                text = update.get("message", {}).get("text", "")
-                if text.strip().startswith("/health"):
+                msg  = update.get("message", {})
+                text = msg.get("text", "").strip()
+                chat_id = str(msg.get("chat", {}).get("id", ""))
+
+                if text.startswith("/health"):
                     send_health(scraper)
+                elif text.startswith("/search"):
+                    _send_search_menu(scraper)
+                    _pending_search[chat_id] = True
+                elif chat_id in _pending_search:
+                    _run_on_demand_search(scraper, text, chat_id)
         except Exception as e:
             logger.error("poll_commands error: %s", e)
             time.sleep(5)
@@ -477,14 +525,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="immo-bot notifier")
-    parser.add_argument(
-        "url", nargs="?", default=None,
-        help="Force a one-off search for this URL (overrides SEARCH_URL_n env vars)",
-    )
-    args = parser.parse_args()
-    if args.url:
-        SEARCH_URLS.clear()
-        SEARCH_URLS.append(args.url)
     main()

@@ -72,6 +72,7 @@ Send these to your bot at any time:
 | Command | Description |
 |---------|-------------|
 | `/health` | Reply with uptime and last run info |
+| `/search` | Show a numbered menu of your configured searches — reply with the number to trigger it immediately |
 
 ---
 

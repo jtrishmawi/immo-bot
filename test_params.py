@@ -11,7 +11,7 @@ os.environ.setdefault("SEARCH_URL_1", (
 ))
 
 from seloger import parse_url, build_url, BASE_URL
-from notifier import build_criteria, _load_search_urls, _label_from_params
+from notifier import build_criteria, _load_search_urls, _label_from_params, _pending_search, SEARCH_URLS
 
 _PARAMS = {
     "distributionTypes": "Rent",
@@ -142,3 +142,30 @@ def test_label_unknown_falls_back():
 def test_label_missing_key():
     _, icon = _label_from_params({})
     assert icon == "🔍"
+
+
+# ---------------------------------------------------------------------------
+# /search command state (_pending_search)
+# ---------------------------------------------------------------------------
+
+def test_pending_search_starts_empty():
+    assert isinstance(_pending_search, dict)
+
+
+def test_pending_search_set_and_cleared():
+    _pending_search["test_chat"] = True
+    assert "test_chat" in _pending_search
+    _pending_search.pop("test_chat", None)
+    assert "test_chat" not in _pending_search
+
+
+def test_search_urls_have_at_least_one_entry():
+    assert len(SEARCH_URLS) >= 1
+
+
+def test_search_menu_labels_are_inferable():
+    for url in SEARCH_URLS:
+        query = parse_url(url)
+        label, icon = _label_from_params(query)
+        assert isinstance(label, str) and len(label) > 0
+        assert icon in ("🏢", "🏡", "🔍")

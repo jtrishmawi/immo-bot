@@ -60,8 +60,15 @@ Users never edit Python. They configure searches by pasting Seloger.com browser 
 ### Quiet by default
 The per-search summary message is only sent to Telegram when there are new listings **or** `DEBUG=true`. Do not change this — users don't want hourly "nothing found" pings.
 
-### /health command
-`poll_commands()` runs in a daemon thread started by `scheduler.py`. It long-polls `getUpdates` and responds to `/health` with uptime + last run info from `_run_state`.
+### Bot commands (`poll_commands`)
+`poll_commands()` runs in a daemon thread started by `scheduler.py`. It long-polls `getUpdates` and handles:
+
+| Command | Behaviour |
+|---------|-----------|
+| `/health` | Reply with uptime + last run info from `_run_state` |
+| `/search` | Send a numbered menu of configured searches; next reply triggers that search immediately |
+
+State between `/search` and the user's numeric reply is tracked in `_pending_search` (dict keyed by `chat_id`). The on-demand search runs synchronously in the poll thread (acceptable for a personal bot) and updates `_run_state` like a scheduled run.
 
 ---
 

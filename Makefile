@@ -1,4 +1,4 @@
-.PHONY: setup run dev schedule search clean
+.PHONY: setup run dev schedule clean
 
 ifeq ($(OS),Windows_NT)
   PS = powershell -ExecutionPolicy Bypass -NoProfile -File tasks.ps1
@@ -14,9 +14,6 @@ dev:
 
 schedule:
 	$(PS) schedule
-
-search:
-	$(PS) search "$(URL)"
 
 clean:
 	$(PS) clean
@@ -37,9 +34,6 @@ dev:
 
 schedule:
 	$(PYTHON) scheduler.py
-
-search:
-	$(PYTHON) notifier.py "$(URL)"
 
 clean:
 	rm -rf .venv __pycache__ *.pyc
