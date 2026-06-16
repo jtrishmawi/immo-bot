@@ -150,7 +150,10 @@ def poll_commands(
                 text    = msg.get("text", "").strip()
                 chat_id = str(msg.get("chat", {}).get("id", ""))
 
-                if text.startswith("/health"):
+                if text.startswith("/start"):
+                    if on_help:
+                        on_help()
+                elif text.startswith("/health"):
                     on_health()
                 elif text.startswith("/searchall"):
                     if on_searchall:
