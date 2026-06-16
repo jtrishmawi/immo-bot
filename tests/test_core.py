@@ -170,3 +170,82 @@ def test_search_menu_labels_are_inferable():
         label, icon = _label_from_params(query)
         assert isinstance(label, str) and len(label) > 0
         assert icon in ("🏢", "🏡", "🔍")
+
+
+# ---------------------------------------------------------------------------
+# PAP.fr URL parsing
+# ---------------------------------------------------------------------------
+
+from immo_bot.scrapers.pap import parse_url as pap_parse_url, build_url as pap_build_url
+from immo_bot.core import _detect_site, _label_from_params_pap
+
+_PAP_URL = (
+    "https://www.pap.fr/annonce/locations-appartement-ascenseur-dernier-etage-vide"
+    "-nanterre-92000-g43265g43268g43271g43275g43276g43280g43283g43285g43292g43298"
+    "g43300g43345g43353g43389g43391"
+    "-du-3-pieces-au-4-pieces-jusqu-a-1800-euros-a-partir-de-70-m2"
+)
+
+
+def test_pap_parse_url_extracts_slug():
+    p = pap_parse_url(_PAP_URL)
+    assert p["slug"].startswith("locations-appartement")
+
+
+def test_pap_parse_url_extracts_transaction():
+    assert pap_parse_url(_PAP_URL)["transaction"] == "locations"
+
+
+def test_pap_parse_url_extracts_typebien():
+    assert pap_parse_url(_PAP_URL)["typebien"] == "appartement"
+
+
+def test_pap_parse_url_extracts_locations():
+    locs = pap_parse_url(_PAP_URL)["locations"].split(",")
+    assert "43265" in locs
+    assert "43268" in locs
+
+
+def test_pap_parse_url_extracts_rooms_range():
+    p = pap_parse_url(_PAP_URL)
+    assert p["nb_pieces_min"] == "3"
+    assert p["nb_pieces_max"] == "4"
+
+
+def test_pap_parse_url_extracts_price():
+    assert pap_parse_url(_PAP_URL)["prix_max"] == "1800"
+
+
+def test_pap_parse_url_extracts_surface():
+    assert pap_parse_url(_PAP_URL)["surface_min"] == "70"
+
+
+def test_pap_parse_url_city_label():
+    p = pap_parse_url(_PAP_URL)
+    assert p.get("city_label", "").lower() == "nanterre"
+
+
+def test_pap_parse_url_roundtrip():
+    p = pap_parse_url(_PAP_URL)
+    assert pap_build_url(p) == _PAP_URL
+
+
+def test_pap_build_url_requires_slug():
+    with pytest.raises(ValueError):
+        pap_build_url({})
+
+
+def test_detect_site_pap():
+    assert _detect_site(_PAP_URL) == "pap"
+
+
+def test_detect_site_seloger():
+    assert _detect_site("https://www.seloger.com/classified-search?distributionTypes=Rent") == "seloger"
+
+
+def test_pap_label_from_params():
+    p = pap_parse_url(_PAP_URL)
+    label, icon = _label_from_params_pap(p)
+    assert "Appartements" in label
+    assert "Nanterre" in label
+    assert icon == "🏠"

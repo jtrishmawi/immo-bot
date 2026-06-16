@@ -23,6 +23,7 @@ from .platforms import telegram as _tg
 from .platforms import whatsapp as _wa
 from .db import init_db, is_sent, mark_sent
 from .scrapers.seloger import build_url, parse_url
+from .scrapers import pap as _pap
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,18 @@ _ESTATE_LABELS: dict[str, tuple[str, str]] = {
 }
 
 _run_state: dict = {"started_at": None, "last_run_at": None, "last_run_sent": 0}
+
+
+def _detect_site(url: str) -> str:
+    return "pap" if "pap.fr" in url else "seloger"
+
+
+def _label_from_params_pap(params: dict) -> tuple[str, str]:
+    t    = params.get("typebien", "").lower()
+    city = params.get("city_label", "PAP")
+    icon = "🏡" if "maison" in t else "🏠"
+    kind = "Maisons" if "maison" in t else "Appartements"
+    return (f"{kind} ({city})", icon)
 
 SELOGER_SEARCH_API     = "https://www.seloger.com/serp-bff/search"
 SELOGER_CLASSIFIED_API = "https://www.seloger.com/classifiedList"
@@ -241,6 +254,42 @@ def format_message(l: dict) -> str:
     return "\n".join(lines)
 
 
+def format_message_pap(l: dict) -> str:
+    parts = ["Appartement"]
+    if l.get("rooms"):
+        parts.append(f"{l['rooms']} pièces")
+    if l.get("space"):
+        parts.append(f"{int(l['space'])}m²")
+    title = " · ".join(parts)
+
+    location  = l.get("city", "")
+    if l.get("zip_code"):
+        location += f" ({l['zip_code']})"
+    price_str = f"{int(l['price']):,} €/mois".replace(",", " ") if l.get("price") else "prix N/A"
+
+    lines = [f"🏠 <b>{title}</b>  <i>[PAP]</i>", f"📍 {location}", f"💶 <b>{price_str}</b>"]
+    if l.get("url"):
+        lines.append(f'\n<a href="{l["url"]}">🔗 Voir l\'annonce</a>')
+    return "\n".join(lines)
+
+
+def _send_new_listings_pap(scraper, conn, items: list, label: str, broadcast_mode: bool = False) -> int:
+    sent_count = 0
+    for item in items:
+        lid  = str(item.get("id"))
+        text = format_message_pap(item)
+        send_fn = broadcast if broadcast_mode else _tg.send
+        ok   = send_fn(scraper, text, item.get("photo"))
+        if ok:
+            mark_sent(conn, lid, item.get("city", ""), item.get("price") or 0)
+            sent_count += 1
+            logger.info("[%s] Sent %s — %s %s€", label, lid, item.get("city"), item.get("price"))
+            time.sleep(0.5)
+        else:
+            logger.error("[%s] Failed to send %s", label, lid)
+    return sent_count
+
+
 # ---------------------------------------------------------------------------
 # Platform broadcasting
 # ---------------------------------------------------------------------------
@@ -280,7 +329,10 @@ def send_health(scraper) -> None:
 def send_search_menu(scraper) -> None:
     lines = ["🔍 <b>Quelle recherche lancer ?</b>"]
     for i, url in enumerate(SEARCH_URLS, 1):
-        label, icon = _label_from_params(parse_url(url))
+        if _detect_site(url) == "pap":
+            label, icon = _label_from_params_pap(_pap.parse_url(url))
+        else:
+            label, icon = _label_from_params(parse_url(url))
         lines.append(f"{i}. {icon} {label}")
     lines.append("\nRépondez avec le numéro.")
     _tg.send(scraper, "\n".join(lines))
@@ -295,17 +347,33 @@ def run_on_demand_search(scraper, chat_id: str, text: str) -> None:
         _tg.send(scraper, f"Numéro invalide (1–{len(SEARCH_URLS)}).")
         return
 
-    url = SEARCH_URLS[idx]
-    query = parse_url(url)
-    label, icon = _label_from_params(query)
+    url  = SEARCH_URLS[idx]
+    site = _detect_site(url)
+
+    if site == "pap":
+        params     = _pap.parse_url(url)
+        label, icon = _label_from_params_pap(params)
+        search_url  = _pap.build_url(params)
+    else:
+        params     = parse_url(url)
+        label, icon = _label_from_params(params)
+        search_url  = build_url(params)
+
     _tg.send(scraper, f"🔄 Recherche {icon} <b>{label}</b> en cours…")
 
     conn = init_db()
     try:
-        items     = _collect_all_items(scraper, build_criteria(query), label)
-        new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
-        already   = len(items) - len(new_items)
-        sent      = _send_new_listings(scraper, conn, new_items, label, broadcast_mode=False)
+        if site == "pap":
+            items     = _pap.fetch_listings(scraper, search_url)
+            new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+            already   = len(items) - len(new_items)
+            sent      = _send_new_listings_pap(scraper, conn, new_items, label, broadcast_mode=False)
+        else:
+            items     = _collect_all_items(scraper, build_criteria(params), label)
+            new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+            already   = len(items) - len(new_items)
+            sent      = _send_new_listings(scraper, conn, new_items, label, broadcast_mode=False)
+
         if not new_items:
             _tg.send(scraper, f"ℹ️ Aucune nouvelle annonce pour <b>{label}</b> ({already} déjà vues).")
         _run_state["last_run_at"]   = datetime.now(ZoneInfo("Europe/Paris"))
@@ -360,31 +428,63 @@ def main():
     if DEBUG:
         debug_send(scraper, "Notifier démarré")
 
-    searches = [(*_label_from_params(parse_url(url)), parse_url(url)) for url in SEARCH_URLS]
+    searches = []
+    for u in SEARCH_URLS:
+        site = _detect_site(u)
+        if site == "pap":
+            p = _pap.parse_url(u)
+            label, icon = _label_from_params_pap(p)
+        else:
+            p = parse_url(u)
+            label, icon = _label_from_params(p)
+        searches.append((label, icon, p, site))
     logger.info("Running %d search(es)", len(searches))
 
     total_sent = 0
-    for label, icon, params in searches:
-        url = build_url(params)
-        logger.info("Recherche %s : %s", label, url)
-        debug_send(scraper, f"Fetching {label}…")
+    for label, icon, params, site in searches:
+        if site == "pap":
+            search_url = _pap.build_url(params)
+            logger.info("Recherche PAP %s : %s", label, search_url)
+            debug_send(scraper, f"Fetching {label}…")
 
-        items     = _collect_all_items(scraper, build_criteria(params), label)
-        new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
-        already   = len(items) - len(new_items)
-        logger.info("[%s] %d new, %d already seen", label, len(new_items), already)
-        debug_send(scraper, f"{label} — {len(items)} trouvées · {already} déjà vues · {len(new_items)} nouvelles")
+            items     = _pap.fetch_listings(scraper, search_url)
+            new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+            already   = len(items) - len(new_items)
+            logger.info("[%s] %d new, %d already seen", label, len(new_items), already)
+            debug_send(scraper, f"{label} — {len(items)} trouvées · {already} déjà vues · {len(new_items)} nouvelles")
 
-        if new_items or DEBUG:
-            now        = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M")
-            count_line = (
-                f"✅ {len(new_items)} nouvelle{'s' if len(new_items) > 1 else ''} annonce{'s' if len(new_items) > 1 else ''}"
-                if new_items else "ℹ️ Aucune nouvelle annonce"
-            )
-            broadcast(scraper, f'🔍 <b>Recherche {label.lower()}</b> — {now}\n<a href="{url}">{icon} Voir les annonces</a>\n\n{count_line}')
-        time.sleep(1)
+            if new_items or DEBUG:
+                now        = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M")
+                count_line = (
+                    f"✅ {len(new_items)} nouvelle{'s' if len(new_items) > 1 else ''} annonce{'s' if len(new_items) > 1 else ''}"
+                    if new_items else "ℹ️ Aucune nouvelle annonce"
+                )
+                broadcast(scraper, f'🔍 <b>Recherche {label.lower()}</b> — {now}\n<a href="{search_url}">{icon} Voir les annonces</a>\n\n{count_line}')
+            time.sleep(1)
 
-        sent        = _send_new_listings(scraper, conn, new_items, label, broadcast_mode=True)
+            sent = _send_new_listings_pap(scraper, conn, new_items, label, broadcast_mode=True)
+        else:
+            search_url = build_url(params)
+            logger.info("Recherche Seloger %s : %s", label, search_url)
+            debug_send(scraper, f"Fetching {label}…")
+
+            items     = _collect_all_items(scraper, build_criteria(params), label)
+            new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+            already   = len(items) - len(new_items)
+            logger.info("[%s] %d new, %d already seen", label, len(new_items), already)
+            debug_send(scraper, f"{label} — {len(items)} trouvées · {already} déjà vues · {len(new_items)} nouvelles")
+
+            if new_items or DEBUG:
+                now        = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M")
+                count_line = (
+                    f"✅ {len(new_items)} nouvelle{'s' if len(new_items) > 1 else ''} annonce{'s' if len(new_items) > 1 else ''}"
+                    if new_items else "ℹ️ Aucune nouvelle annonce"
+                )
+                broadcast(scraper, f'🔍 <b>Recherche {label.lower()}</b> — {now}\n<a href="{search_url}">{icon} Voir les annonces</a>\n\n{count_line}')
+            time.sleep(1)
+
+            sent = _send_new_listings(scraper, conn, new_items, label, broadcast_mode=True)
+
         total_sent += sent
         logger.info("[%s] Done — %d new listings sent", label, sent)
         time.sleep(3)
