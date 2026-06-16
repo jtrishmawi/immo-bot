@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+.env
+.env.example
+*.md
+Makefile
+tasks.ps1
+tests
+__pycache__
+*.pyc
+*.pyo
+baileys-service
