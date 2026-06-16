@@ -19,6 +19,8 @@ services:
       - SEARCH_URL_6=${SEARCH_URL_6:-}
       - SEARCH_URL_7=${SEARCH_URL_7:-}
       - SEARCH_URL_8=${SEARCH_URL_8:-}
+      - SEARCH_URL_9=${SEARCH_URL_9:-}
+      - SEARCH_URL_10=${SEARCH_URL_10:-}
     volumes:
       - notifier_data:/app/data
     depends_on:
