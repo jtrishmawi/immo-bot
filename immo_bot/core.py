@@ -185,7 +185,7 @@ def _clean_price(raw) -> Optional[float]:
     if isinstance(raw, (int, float)):
         return float(raw)
     if isinstance(raw, str):
-        m = re.search(r"\d+", raw.replace(" ", "").replace("\xa0", ""))
+        m = re.search(r"\d+", raw.replace(" ", "").replace("\xa0", "").replace(" ", ""))
         return float(m.group()) if m else None
     return None
 
@@ -201,6 +201,30 @@ def _first_photo(classified: dict) -> Optional[str]:
     return None
 
 
+def _extract_price(item: dict, classified: dict) -> Optional[float]:
+    hard = classified.get("hardFacts", {}) or {}
+    price_block = hard.get("price", {}) if isinstance(hard, dict) else {}
+
+    if DEBUG:
+        logger.debug("price_block keys: %s | item keys: %s", list(price_block), list(item))
+
+    candidates = [
+        price_block.get("display"),
+        price_block.get("pricePerMonth"),
+        price_block.get("monthly"),
+        price_block.get("amount"),
+        (item.get("listing") or {}).get("price", {}).get("value") if isinstance(item.get("listing"), dict) else None,
+        item.get("price"),
+        price_block.get("value"),
+    ]
+    for raw in candidates:
+        v = _clean_price(raw)
+        if v is not None and v >= 100:
+            return v
+    # nothing plausible — return raw value anyway so the message shows something
+    return _clean_price(price_block.get("value"))
+
+
 def parse_listing(item: dict, classified: dict) -> dict:
     loc      = classified.get("location", {}).get("address", {}) or {}
     raw      = classified.get("rawData", {}) or {}
@@ -208,7 +232,7 @@ def parse_listing(item: dict, classified: dict) -> dict:
     provider = classified.get("provider", {}) or {}
     return {
         "id":           str(item.get("id")),
-        "price":        _clean_price(hard.get("price", {}).get("value")),
+        "price":        _extract_price(item, classified),
         "estate_type":  raw.get("propertyType", ""),
         "city":         loc.get("city", ""),
         "zip_code":     loc.get("zipCode", ""),
