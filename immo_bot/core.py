@@ -24,6 +24,7 @@ from .platforms import whatsapp as _wa
 from .db import init_db, is_sent, mark_sent, clear_db as _clear_db, save_tg_msg, get_tg_msgs, clear_tg_msgs
 from .scrapers.seloger import build_url, parse_url
 from .scrapers import pap as _pap
+from .scrapers import bienici as _bienici
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,9 @@ _run_state: dict = {"started_at": None, "last_run_at": None, "last_run_sent": 0}
 
 
 def _detect_site(url: str) -> str:
-    return "pap" if "pap.fr" in url else "seloger"
+    if "pap.fr" in url:     return "pap"
+    if "bienici.com" in url: return "bienici"
+    return "seloger"
 
 
 def _label_from_params_pap(params: dict) -> tuple[str, str]:
@@ -80,6 +83,19 @@ def _label_from_params_pap(params: dict) -> tuple[str, str]:
     icon = "🏡" if "maison" in t else "🏠"
     kind = "Maisons" if "maison" in t else "Appartements"
     return (f"{kind} ({city})", icon)
+
+
+def _label_from_params_bienici(params: dict) -> tuple[str, str]:
+    slugs      = params.get("location_slugs", [])
+    cities     = ", ".join(s.split("-")[0].capitalize() for s in slugs[:3])
+    if len(slugs) > 3:
+        cities += "…"
+    prop_types = params.get("prop_types", [])
+    if set(prop_types) <= {"house", "townhouse"}:
+        kind, icon = "Maisons", "🏡"
+    else:
+        kind, icon = "Appartements", "🏠"
+    return (f"{kind} ({cities})", icon)
 
 SELOGER_SEARCH_API     = "https://www.seloger.com/serp-bff/search"
 SELOGER_CLASSIFIED_API = "https://www.seloger.com/classifiedList"
@@ -316,6 +332,61 @@ def _send_new_listings_pap(scraper, conn, items: list, label: str, broadcast_mod
     return sent_count
 
 
+def format_message_bienici(ad: dict) -> str:
+    prop  = ad.get("propertyType", "flat")
+    kind  = "Maison" if prop in ("house", "townhouse") else "Appartement"
+    parts = [kind]
+    rooms = ad.get("roomsQuantity")
+    if rooms:
+        parts.append(f"{rooms} pièces")
+    area = ad.get("surfaceArea")
+    if area:
+        parts.append(f"{int(area)}m²")
+    title = " · ".join(parts)
+
+    city     = ad.get("city", "")
+    postal   = ad.get("postalCode", "")
+    district = (ad.get("district") or {}).get("libelle", "")
+    location = city
+    if postal:
+        location += f" ({postal})"
+    if district:
+        location += f" · {district}"
+
+    price     = ad.get("price")
+    price_str = f"{int(price):,} €/mois".replace(",", " ") if price else "prix N/A"
+
+    lines = [f"🏠 <b>{title}</b>  <i>[Bien'ici]</i>", f"📍 {location}", f"💶 <b>{price_str}</b>"]
+    if ad.get("isFurnished"):
+        lines.append("🛋️ Meublé")
+    energy = ad.get("energyClassification")
+    if energy:
+        lines.append(f"⚡ DPE {energy}")
+    url = ad.get("_url")
+    if url:
+        lines.append(f'\n<a href="{url}">🔗 Voir l\'annonce</a>')
+    return "\n".join(lines)
+
+
+def _send_new_listings_bienici(scraper, conn, items: list, label: str, broadcast_mode: bool = False) -> int:
+    sent_count = 0
+    for item in items:
+        lid  = str(item.get("id"))
+        text = format_message_bienici(item)
+        send_fn = broadcast if broadcast_mode else _tg.send
+        ok   = send_fn(scraper, text, item.get("_photo"))
+        if not broadcast_mode:
+            _save_msg_id(ok)
+        if ok:
+            mark_sent(conn, lid, item.get("city", ""), item.get("price") or 0)
+            sent_count += 1
+            logger.info("[%s] Sent %s — %s %s€", label, lid, item.get("city"), item.get("price"))
+            time.sleep(0.5)
+        else:
+            logger.error("[%s] Failed to send %s", label, lid)
+    return sent_count
+
+
 # ---------------------------------------------------------------------------
 # Platform broadcasting
 # ---------------------------------------------------------------------------
@@ -369,9 +440,13 @@ def send_health(scraper) -> None:
 def send_search_menu(scraper) -> None:
     lines = ["🔍 <b>Quelle recherche lancer ?</b>\n", "0. 🔍 Toutes les recherches"]
     for i, url in enumerate(SEARCH_URLS, 1):
-        if _detect_site(url) == "pap":
+        site = _detect_site(url)
+        if site == "pap":
             label, icon = _label_from_params_pap(_pap.parse_url(url))
             source = "PAP"
+        elif site == "bienici":
+            label, icon = _label_from_params_bienici(_bienici.parse_url(url))
+            source = "Bien'ici"
         else:
             label, icon = _label_from_params(parse_url(url))
             source = "Seloger"
@@ -423,6 +498,15 @@ def run_on_demand_search_all(scraper) -> None:
                 new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
                 already   = len(items) - len(new_items)
                 sent      = _send_new_listings_pap(scraper, conn, new_items, label, broadcast_mode=False)
+            elif site == "bienici":
+                params      = _bienici.parse_url(url)
+                label, icon = _label_from_params_bienici(params)
+                search_url  = _bienici.build_url(params)
+                raw_items   = _bienici.fetch_listings(scraper, search_url)
+                items     = _bienici.filter_listings(raw_items, params)
+                new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+                already   = len(items) - len(new_items)
+                sent      = _send_new_listings_bienici(scraper, conn, new_items, label, broadcast_mode=False)
             else:
                 params      = parse_url(url)
                 label, icon = _label_from_params(params)
@@ -459,11 +543,15 @@ def run_on_demand_search(scraper, chat_id: str, text: str) -> None:
     site = _detect_site(url)
 
     if site == "pap":
-        params     = _pap.parse_url(url)
+        params      = _pap.parse_url(url)
         label, icon = _label_from_params_pap(params)
         search_url  = _pap.build_url(params)
+    elif site == "bienici":
+        params      = _bienici.parse_url(url)
+        label, icon = _label_from_params_bienici(params)
+        search_url  = _bienici.build_url(params)
     else:
-        params     = parse_url(url)
+        params      = parse_url(url)
         label, icon = _label_from_params(params)
         search_url  = build_url(params)
 
@@ -477,6 +565,12 @@ def run_on_demand_search(scraper, chat_id: str, text: str) -> None:
             new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
             already   = len(items) - len(new_items)
             sent      = _send_new_listings_pap(scraper, conn, new_items, label, broadcast_mode=False)
+        elif site == "bienici":
+            raw_items = _bienici.fetch_listings(scraper, search_url)
+            items     = _bienici.filter_listings(raw_items, params)
+            new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+            already   = len(items) - len(new_items)
+            sent      = _send_new_listings_bienici(scraper, conn, new_items, label, broadcast_mode=False)
         else:
             items     = _collect_all_items(scraper, build_criteria(params), label)
             new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
@@ -545,6 +639,9 @@ def main():
         if site == "pap":
             p = _pap.parse_url(u)
             label, icon = _label_from_params_pap(p)
+        elif site == "bienici":
+            p = _bienici.parse_url(u)
+            label, icon = _label_from_params_bienici(p)
         else:
             p = parse_url(u)
             label, icon = _label_from_params(p)
@@ -575,6 +672,28 @@ def main():
             time.sleep(1)
 
             sent = _send_new_listings_pap(scraper, conn, new_items, label, broadcast_mode=True)
+        elif site == "bienici":
+            search_url = _bienici.build_url(params)
+            logger.info("Recherche Bien'ici %s : %s", label, search_url)
+            debug_send(scraper, f"Fetching {label}…")
+
+            raw_items = _bienici.fetch_listings(scraper, search_url)
+            items     = _bienici.filter_listings(raw_items, params)
+            new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+            already   = len(items) - len(new_items)
+            logger.info("[%s] %d new, %d already seen", label, len(new_items), already)
+            debug_send(scraper, f"{label} — {len(items)} trouvées · {already} déjà vues · {len(new_items)} nouvelles")
+
+            if new_items or DEBUG:
+                now        = datetime.now(ZoneInfo("Europe/Paris")).strftime("%H:%M")
+                count_line = (
+                    f"✅ {len(new_items)} nouvelle{'s' if len(new_items) > 1 else ''} annonce{'s' if len(new_items) > 1 else ''}"
+                    if new_items else "ℹ️ Aucune nouvelle annonce"
+                )
+                broadcast(scraper, f'🔍 <b>Recherche {label.lower()}</b> — {now}\n<a href="{search_url}">{icon} Voir les annonces</a>\n\n{count_line}')
+            time.sleep(1)
+
+            sent = _send_new_listings_bienici(scraper, conn, new_items, label, broadcast_mode=True)
         else:
             search_url = build_url(params)
             logger.info("Recherche Seloger %s : %s", label, search_url)
