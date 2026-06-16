@@ -181,9 +181,11 @@ def _resolve_zone_ids(scraper, slugs: list) -> list:
             )
             if r.ok:
                 data = r.json()
-                if data and data[0].get("zoneIds"):
-                    zone_ids.extend(data[0]["zoneIds"])
-                    logger.debug("slug %s → zoneIds %s", slug, data[0]["zoneIds"])
+                # API returns a single object (not a list)
+                item = data[0] if isinstance(data, list) else data
+                if item and item.get("zoneIds"):
+                    zone_ids.extend(item["zoneIds"])
+                    logger.debug("slug %s → zoneIds %s", slug, item["zoneIds"])
                 else:
                     logger.warning("[Bien'ici] No zone ID found for slug: %s", slug)
         except Exception as e:
