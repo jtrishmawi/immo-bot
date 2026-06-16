@@ -42,10 +42,13 @@ def download_photo(scraper, url: str) -> Optional[bytes]:
     return None
 
 
-def send(scraper, text: str, photo_url: Optional[str] = None) -> bool:
-    """Send a message (with optional photo) to Telegram. No-op if not configured."""
+def send(scraper, text: str, photo_url: Optional[str] = None) -> Optional[int]:
+    """Send a message (with optional photo) to Telegram.
+
+    Returns the Telegram message_id on success, None on failure.
+    """
     if not _TELEGRAM_ENABLED:
-        return False
+        return None
 
     if photo_url:
         photo_bytes = download_photo(scraper, photo_url)
@@ -58,7 +61,7 @@ def send(scraper, text: str, photo_url: Optional[str] = None) -> bool:
                     timeout=30,
                 )
                 if r.ok:
-                    return True
+                    return r.json()["result"]["message_id"]
                 logger.warning("sendPhoto failed %s: %s", r.status_code, r.text[:200])
             except Exception as e:
                 logger.warning("sendPhoto exception: %s", e)
@@ -71,11 +74,45 @@ def send(scraper, text: str, photo_url: Optional[str] = None) -> bool:
             timeout=15,
         )
         if r.ok:
-            return True
+            return r.json()["result"]["message_id"]
         logger.error("sendMessage failed %s: %s", r.status_code, r.text[:300])
     except Exception as e:
         logger.error("Telegram send failed: %s", e)
-    return False
+    return None
+
+
+def delete_messages(message_ids: list) -> int:
+    """Delete Telegram messages by ID. Returns count of successfully deleted messages."""
+    if not _TELEGRAM_ENABLED or not message_ids:
+        return 0
+    deleted = 0
+    for mid in message_ids:
+        try:
+            r = requests.post(
+                f"{TELEGRAM_API}/deleteMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "message_id": mid},
+                timeout=10,
+            )
+            if r.ok:
+                deleted += 1
+        except Exception as e:
+            logger.debug("deleteMessage %s failed: %s", mid, e)
+    return deleted
+
+
+def flush_pending_updates() -> None:
+    """Advance past all pending updates so old commands aren't replayed on restart."""
+    if not _TELEGRAM_ENABLED:
+        return
+    try:
+        r = requests.get(f"{TELEGRAM_API}/getUpdates", params={"offset": -1, "timeout": 1}, timeout=5)
+        updates = r.json().get("result", []) if r.ok else []
+        if updates:
+            last_id = updates[-1]["update_id"]
+            requests.get(f"{TELEGRAM_API}/getUpdates", params={"offset": last_id + 1, "timeout": 1}, timeout=5)
+            logger.info("Flushed %d pending Telegram update(s)", len(updates))
+    except Exception as e:
+        logger.warning("flush_pending_updates: %s", e)
 
 
 def poll_commands(
@@ -83,12 +120,16 @@ def poll_commands(
     on_health:        Callable[[], None],
     on_search:        Callable[[], None],
     on_search_select: Callable[[str, str], None],
+    on_help:          Callable[[], None] | None = None,
+    on_cleandb:       Callable[[], None] | None = None,
 ) -> None:
     """Background thread: long-poll getUpdates and dispatch to callbacks.
 
     on_health()                      → called on /health
     on_search()                      → called on /search (show menu)
     on_search_select(chat_id, text)  → called when a pending chat sends a number
+    on_help()                        → called on /help
+    on_cleandb()                     → called on /cleandb
     """
     offset = 0
     while True:
@@ -112,6 +153,12 @@ def poll_commands(
                 elif text.startswith("/search"):
                     on_search()
                     _pending_search[chat_id] = True
+                elif text.startswith("/help"):
+                    if on_help:
+                        on_help()
+                elif text.startswith("/cleandb"):
+                    if on_cleandb:
+                        on_cleandb()
                 elif chat_id in _pending_search:
                     _pending_search.pop(chat_id, None)
                     on_search_select(chat_id, text)

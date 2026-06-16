@@ -21,7 +21,7 @@ import cloudscraper
 
 from .platforms import telegram as _tg
 from .platforms import whatsapp as _wa
-from .db import init_db, is_sent, mark_sent
+from .db import init_db, is_sent, mark_sent, clear_db as _clear_db, save_tg_msg, get_tg_msgs, clear_tg_msgs
 from .scrapers.seloger import build_url, parse_url
 from .scrapers import pap as _pap
 
@@ -304,6 +304,8 @@ def _send_new_listings_pap(scraper, conn, items: list, label: str, broadcast_mod
         text = format_message_pap(item)
         send_fn = broadcast if broadcast_mode else _tg.send
         ok   = send_fn(scraper, text, item.get("photo"))
+        if not broadcast_mode:
+            _save_msg_id(ok)
         if ok:
             mark_sent(conn, lid, item.get("city", ""), item.get("price") or 0)
             sent_count += 1
@@ -318,11 +320,25 @@ def _send_new_listings_pap(scraper, conn, items: list, label: str, broadcast_mod
 # Platform broadcasting
 # ---------------------------------------------------------------------------
 
+def _save_msg_id(msg_id) -> None:
+    if msg_id is None:
+        return
+    try:
+        conn = init_db()
+        save_tg_msg(conn, msg_id)
+        conn.close()
+    except Exception:
+        pass
+
+
 def broadcast(scraper, text: str, photo_url: str = None) -> bool:
     """Send to all configured platforms. Used for scheduled runs."""
     ok = False
     if _tg._TELEGRAM_ENABLED:
-        ok = _tg.send(scraper, text, photo_url) or ok
+        msg_id = _tg.send(scraper, text, photo_url)
+        if msg_id is not None:
+            ok = True
+            _save_msg_id(msg_id)
     if _WHATSAPP_ENABLED:
         _wa.send(text, WHATSAPP_SERVICE_URL, WHATSAPP_TO, media_url=photo_url)
         ok = True
@@ -347,7 +363,7 @@ def send_health(scraper) -> None:
     started = _run_state["started_at"].strftime("%d/%m %H:%M") if _run_state["started_at"] else "?"
     last    = _run_state["last_run_at"].strftime("%d/%m %H:%M") if _run_state["last_run_at"] else "jamais"
     sent    = _run_state["last_run_sent"]
-    _tg.send(scraper, f"✅ <b>immo-bot actif</b> depuis {started}\nDernier run : {last} — {sent} annonce(s)")
+    _save_msg_id(_tg.send(scraper, f"✅ <b>immo-bot actif</b> depuis {started}\nDernier run : {last} — {sent} annonce(s)"))
 
 
 def send_search_menu(scraper) -> None:
@@ -361,7 +377,33 @@ def send_search_menu(scraper) -> None:
             source = "Seloger"
         lines.append(f'{i}. {icon} {label} — <a href="{url}">{source}</a>')
     lines.append("\nRépondez avec le numéro.")
-    _tg.send(scraper, "\n".join(lines))
+    _save_msg_id(_tg.send(scraper, "\n".join(lines)))
+
+
+def send_help(scraper) -> None:
+    _save_msg_id(_tg.send(scraper, (
+        "🤖 <b>immo-bot — commandes disponibles</b>\n\n"
+        "/health — état du service\n"
+        "/search — lancer une recherche à la demande\n"
+        "/cleandb — vider la base de dédoublonnage\n"
+        "/help — afficher ce message"
+    )))
+
+
+def clean_db(scraper) -> None:
+    conn = init_db()
+    try:
+        count   = _clear_db(conn)
+        msg_ids = get_tg_msgs(conn)
+        deleted = _tg.delete_messages(msg_ids)
+        clear_tg_msgs(conn)
+    finally:
+        conn.close()
+    _tg.send(scraper, (
+        f"🗑️ Base vidée — {count} annonce(s) supprimée(s).\n"
+        f"💬 {deleted} message(s) Telegram supprimé(s).\n"
+        "Le prochain run renverra toutes les annonces."
+    ))
 
 
 def run_on_demand_search(scraper, chat_id: str, text: str) -> None:
@@ -370,7 +412,7 @@ def run_on_demand_search(scraper, chat_id: str, text: str) -> None:
     except ValueError:
         return
     if idx < 0 or idx >= len(SEARCH_URLS):
-        _tg.send(scraper, f"Numéro invalide (1–{len(SEARCH_URLS)}).")
+        _save_msg_id(_tg.send(scraper, f"Numéro invalide (1–{len(SEARCH_URLS)})."))
         return
 
     url  = SEARCH_URLS[idx]
@@ -385,7 +427,7 @@ def run_on_demand_search(scraper, chat_id: str, text: str) -> None:
         label, icon = _label_from_params(params)
         search_url  = build_url(params)
 
-    _tg.send(scraper, f"🔄 Recherche {icon} <b>{label}</b> en cours…")
+    _save_msg_id(_tg.send(scraper, f"🔄 Recherche {icon} <b>{label}</b> en cours…"))
 
     conn = init_db()
     try:
@@ -402,7 +444,7 @@ def run_on_demand_search(scraper, chat_id: str, text: str) -> None:
             sent      = _send_new_listings(scraper, conn, new_items, label, broadcast_mode=False)
 
         if not new_items:
-            _tg.send(scraper, f"ℹ️ Aucune nouvelle annonce pour <b>{label}</b> ({already} déjà vues).")
+            _save_msg_id(_tg.send(scraper, f"ℹ️ Aucune nouvelle annonce pour <b>{label}</b> ({already} déjà vues)."))
         _run_state["last_run_at"]   = datetime.now(ZoneInfo("Europe/Paris"))
         _run_state["last_run_sent"] = sent
     finally:
@@ -426,6 +468,8 @@ def _send_new_listings(scraper, conn, new_items: list, label: str, broadcast_mod
             text    = format_message(listing)
             send_fn = broadcast if broadcast_mode else _tg.send
             ok      = send_fn(scraper, text, listing["photo"])
+            if not broadcast_mode:
+                _save_msg_id(ok)
 
             if ok:
                 mark_sent(conn, lid, listing["city"], listing["price"] or 0)

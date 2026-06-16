@@ -19,6 +19,12 @@ def init_db() -> sqlite3.Connection:
             price    REAL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tg_messages (
+            message_id  INTEGER PRIMARY KEY,
+            sent_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     return conn
 
@@ -34,4 +40,25 @@ def mark_sent(conn: sqlite3.Connection, listing_id: str, city: str = "", price: 
         "INSERT OR IGNORE INTO sent_listings (id, city, price) VALUES (?, ?, ?)",
         (listing_id, city, price)
     )
+    conn.commit()
+
+
+def clear_db(conn: sqlite3.Connection) -> int:
+    """Delete all sent listings. Returns the number of rows removed."""
+    cursor = conn.execute("DELETE FROM sent_listings")
+    conn.commit()
+    return cursor.rowcount
+
+
+def save_tg_msg(conn: sqlite3.Connection, message_id: int) -> None:
+    conn.execute("INSERT OR IGNORE INTO tg_messages (message_id) VALUES (?)", (message_id,))
+    conn.commit()
+
+
+def get_tg_msgs(conn: sqlite3.Connection) -> list:
+    return [r[0] for r in conn.execute("SELECT message_id FROM tg_messages").fetchall()]
+
+
+def clear_tg_msgs(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM tg_messages")
     conn.commit()

@@ -41,6 +41,7 @@ if __name__ == "__main__":
     core._run_state["started_at"] = datetime.now(ZoneInfo("Europe/Paris"))
 
     if _tg._TELEGRAM_ENABLED:
+        _tg.flush_pending_updates()
         t = threading.Thread(
             target=_tg.poll_commands,
             args=(
@@ -49,6 +50,10 @@ if __name__ == "__main__":
                 lambda: core.send_search_menu(scraper),
                 lambda chat_id, text: core.run_on_demand_search(scraper, chat_id, text),
             ),
+            kwargs={
+                "on_help":    lambda: core.send_help(scraper),
+                "on_cleandb": lambda: core.clean_db(scraper),
+            },
             daemon=True,
         )
         t.start()
@@ -68,7 +73,7 @@ if __name__ == "__main__":
         f"Prochain run à la prochaine heure pile (08h-22h)"
     )
     if _tg._TELEGRAM_ENABLED:
-        startup_msg += "\n\nCommandes disponibles :\n/health — état du service\n/search — lancer une recherche"
+        startup_msg += "\n\nCommandes disponibles :\n/health — état du service\n/search — lancer une recherche\n/cleandb — vider la base\n/help — aide"
     core.broadcast(scraper, startup_msg)
 
     logger.info("Scheduler started (%s) — running initial search then hourly 08:00-22:00 Paris time", _REPLICA)
