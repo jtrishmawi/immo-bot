@@ -144,16 +144,59 @@ def _get_session():
 #      ├─ span.item-price         → "1.560 €"
 #      ├─ span.h1                 → "Poissy" or "Saint-Leu-La-Forêt (95320)"
 #      └─ ul.item-tags li         → ["3 pièces", "2 chambres", "76 m²"]
+#
+#   h1#list-searchbar-mobile-h1 on page 1 contains the canonical city list,
+#   e.g. "Location appartement … Nanterre, Clamart, Meudon, … 3 ou 4 pièces…"
 # ---------------------------------------------------------------------------
 
-def _parse_html(html: str) -> list[dict]:
+_H1_SKIP_WORDS = frozenset({
+    "Location", "Vente", "Appartement", "Maison", "Studio",
+    "Parking", "Loft", "Chambre", "Terrain", "Immeuble",
+})
+
+
+def _extract_valid_cities(h1_text: str) -> set[str]:
+    """Parse the canonical city list from PAP's search h1 element.
+
+    The h1 mixes feature keywords (lowercase) and city names (Title Case).
+    Cities are the uppercase-starting words/phrases in each comma segment,
+    after stripping the trailing criteria (rooms, price, surface).
+    """
+    text = re.sub(r"\s+\d+\s+(?:ou|à|-)\s+\d+\s+pièces?.*", "", h1_text)
+    text = re.sub(r"\s+\d+\s+pièces?.*", "", text)
+
+    cities: set[str] = set()
+    for chunk in text.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        words = chunk.split()
+        start_idx = None
+        for i, word in enumerate(words):
+            w = re.sub(r"\(\d{5}\)", "", word).strip()
+            if w and w[0].isupper() and w not in _H1_SKIP_WORDS:
+                start_idx = i
+                break
+        if start_idx is not None:
+            city = " ".join(words[start_idx:])
+            city = re.sub(r"\s*\(\d{5}\)", "", city).strip()
+            if city:
+                cities.add(city)
+    return cities
+
+
+def _parse_html(html: str) -> tuple[list[dict], str]:
     soup  = BeautifulSoup(html, "html.parser")
+
+    h1_el   = soup.find(id="list-searchbar-mobile-h1")
+    h1_text = h1_el.get_text(strip=True) if h1_el else ""
+
     cards = [c for c in soup.select("div.search-list-item-alt")
              if c.select_one("[data-annonce]")]
 
     if not cards:
         logger.warning("pap: no listing cards found — HTML structure may have changed")
-        return []
+        return [], h1_text
 
     results = []
     for card in cards:
@@ -214,19 +257,19 @@ def _parse_html(html: str) -> list[dict]:
         except Exception as e:
             logger.debug("pap card parse error: %s", e)
 
-    return results
+    return results, h1_text
 
 
 # ---------------------------------------------------------------------------
 # Client-side criteria filter
 # ---------------------------------------------------------------------------
 
-def filter_listings(items: list[dict], params: dict) -> list[dict]:
+def filter_listings(items: list[dict], params: dict, valid_cities: set[str] | None = None) -> list[dict]:
     """Drop listings that don't match the criteria encoded in params.
 
     PAP often injects 'similar' listings outside the requested price/surface/
-    rooms range. We re-apply the same constraints client-side so only exact
-    matches get notified.
+    rooms range or from nearby cities. We re-apply constraints client-side.
+    valid_cities: authoritative set from the search h1 element (optional).
     """
     prix_max    = int(params["prix_max"])    if params.get("prix_max")    else None
     prix_min    = int(params["prix_min"])    if params.get("prix_min")    else None
@@ -235,7 +278,7 @@ def filter_listings(items: list[dict], params: dict) -> list[dict]:
     pieces_min  = int(params["nb_pieces_min"]) if params.get("nb_pieces_min") else None
     pieces_max  = int(params["nb_pieces_max"]) if params.get("nb_pieces_max") else None
 
-    city_label = params.get("city_label", "").lower() if params.get("city_label") else None
+    valid_lower = {c.lower() for c in valid_cities} if valid_cities else None
 
     kept = []
     for item in items:
@@ -243,11 +286,12 @@ def filter_listings(items: list[dict], params: dict) -> list[dict]:
         space  = item.get("space")
         rooms  = item.get("rooms")
 
+        # Drop PAP-injected nearby listings from other cities (tagged "à Xkm de")
         if item.get("is_nearby"):
             logger.debug("pap filter: drop %s nearby listing (%s)", item.get("id"), item.get("city"))
             continue
-        if city_label and item.get("city") and city_label not in item.get("city", "").lower():
-            logger.debug("pap filter: drop %s city %r not in %r", item.get("id"), item.get("city"), city_label)
+        if valid_lower and item.get("city") and item["city"].lower() not in valid_lower:
+            logger.debug("pap filter: drop %s city %r not in search scope", item.get("id"), item.get("city"))
             continue
 
         if prix_max    is not None and price  is not None and price  > prix_max:
@@ -281,15 +325,18 @@ def filter_listings(items: list[dict], params: dict) -> list[dict]:
 # Public scraping entry point
 # ---------------------------------------------------------------------------
 
-def fetch_listings(scraper, base_url: str, max_pages: int = 3) -> list[dict]:
-    """Scrape PAP.fr search pages and return normalised listing dicts.
+def fetch_listings(scraper, base_url: str, max_pages: int = 3) -> tuple[list[dict], set[str]]:
+    """Scrape PAP.fr search pages and return (listings, valid_cities).
 
+    valid_cities is extracted from the h1#list-searchbar-mobile-h1 element on
+    page 1 — it contains the authoritative city list for the search.
     Uses curl-cffi (Chrome TLS fingerprint) to bypass Cloudflare.
     Pagination: page 1 = base_url, page N = base_url-N.
     The `scraper` param is kept for API compatibility but is not used.
     """
     session = _get_session()
     results: list[dict] = []
+    valid_cities: set[str] = set()
 
     for page in range(1, max_pages + 1):
         url = base_url if page == 1 else f"{base_url}-{page}"
@@ -303,8 +350,12 @@ def fetch_listings(scraper, base_url: str, max_pages: int = 3) -> list[dict]:
             logger.error("pap fetch_listings page %d: %s", page, e)
             break
 
-        items = _parse_html(r.text)
+        items, h1_text = _parse_html(r.text)
         logger.info("[PAP] page %d: %d items", page, len(items))
+
+        if page == 1 and h1_text:
+            valid_cities = _extract_valid_cities(h1_text)
+            logger.debug("pap: %d valid cities from h1", len(valid_cities))
 
         if not items:
             logger.info("[PAP] page %d: empty — stopping", page)
@@ -314,4 +365,4 @@ def fetch_listings(scraper, base_url: str, max_pages: int = 3) -> list[dict]:
         time.sleep(2)
 
     logger.info("[PAP] collected %d listings total", len(results))
-    return results
+    return results, valid_cities

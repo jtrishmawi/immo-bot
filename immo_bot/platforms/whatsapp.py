@@ -10,6 +10,8 @@ import requests as http
 
 logger = logging.getLogger(__name__)
 
+_sidecar_warned = False  # log unreachable sidecar once per session, then silence
+
 _HTML_BOLD = re.compile(r"<b>(.*?)</b>", re.S)
 _HTML_LINK = re.compile(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.S)
 _HTML_TAG  = re.compile(r"<[^>]+>")
@@ -25,16 +27,20 @@ def to_whatsapp(html: str) -> str:
 
 def send(text: str, service_url: str, to: str, media_url: str = None) -> bool:
     """POST a message to the Baileys sidecar. Returns True on success."""
+    global _sidecar_warned
     payload = {"to": to, "text": to_whatsapp(text)}
     if media_url:
         payload["mediaUrl"] = media_url
     try:
         r = http.post(f"{service_url}/send", json=payload, timeout=15)
         if r.ok:
+            _sidecar_warned = False  # reset if sidecar becomes reachable again
             return True
         logger.error("WhatsApp send failed %s: %s", r.status_code, r.text[:200])
     except Exception as e:
-        logger.error("WhatsApp send error: %s", e)
+        if not _sidecar_warned:
+            logger.warning("WhatsApp sidecar not reachable at %s — silencing further errors this session", service_url)
+            _sidecar_warned = True
     return False
 
 
