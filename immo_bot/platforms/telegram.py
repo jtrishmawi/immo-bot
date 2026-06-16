@@ -122,6 +122,7 @@ def poll_commands(
     on_search_select: Callable[[str, str], None],
     on_help:          Callable[[], None] | None = None,
     on_cleandb:       Callable[[], None] | None = None,
+    on_searchall:     Callable[[], None] | None = None,
 ) -> None:
     """Background thread: long-poll getUpdates and dispatch to callbacks.
 
@@ -130,6 +131,7 @@ def poll_commands(
     on_search_select(chat_id, text)  → called when a pending chat sends a number
     on_help()                        → called on /help
     on_cleandb()                     → called on /cleandb
+    on_searchall()                   → called on /searchall
     """
     offset = 0
     while True:
@@ -150,6 +152,9 @@ def poll_commands(
 
                 if text.startswith("/health"):
                     on_health()
+                elif text.startswith("/searchall"):
+                    if on_searchall:
+                        on_searchall()
                 elif text.startswith("/search"):
                     on_search()
                     _pending_search[chat_id] = True

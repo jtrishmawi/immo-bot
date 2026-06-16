@@ -367,7 +367,7 @@ def send_health(scraper) -> None:
 
 
 def send_search_menu(scraper) -> None:
-    lines = ["🔍 <b>Quelle recherche lancer ?</b>\n"]
+    lines = ["🔍 <b>Quelle recherche lancer ?</b>\n", "0. 🔍 Toutes les recherches"]
     for i, url in enumerate(SEARCH_URLS, 1):
         if _detect_site(url) == "pap":
             label, icon = _label_from_params_pap(_pap.parse_url(url))
@@ -384,7 +384,8 @@ def send_help(scraper) -> None:
     _save_msg_id(_tg.send(scraper, (
         "🤖 <b>immo-bot — commandes disponibles</b>\n\n"
         "/health — état du service\n"
-        "/search — lancer une recherche à la demande\n"
+        "/search — lancer une recherche (menu)\n"
+        "/searchall — lancer toutes les recherches\n"
         "/cleandb — vider la base de dédoublonnage\n"
         "/help — afficher ce message"
     )))
@@ -406,13 +407,52 @@ def clean_db(scraper) -> None:
     ))
 
 
+def run_on_demand_search_all(scraper) -> None:
+    _save_msg_id(_tg.send(scraper, f"🔄 Lancement de toutes les recherches ({len(SEARCH_URLS)})…"))
+    conn = init_db()
+    total_sent = 0
+    try:
+        for url in SEARCH_URLS:
+            site = _detect_site(url)
+            if site == "pap":
+                params      = _pap.parse_url(url)
+                label, icon = _label_from_params_pap(params)
+                search_url  = _pap.build_url(params)
+                raw_items, valid_cities = _pap.fetch_listings(scraper, search_url)
+                items     = _pap.filter_listings(raw_items, params, valid_cities=valid_cities)
+                new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+                already   = len(items) - len(new_items)
+                sent      = _send_new_listings_pap(scraper, conn, new_items, label, broadcast_mode=False)
+            else:
+                params      = parse_url(url)
+                label, icon = _label_from_params(params)
+                search_url  = build_url(params)
+                items     = _collect_all_items(scraper, build_criteria(params), label)
+                new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
+                already   = len(items) - len(new_items)
+                sent      = _send_new_listings(scraper, conn, new_items, label, broadcast_mode=False)
+            if not new_items:
+                _save_msg_id(_tg.send(scraper, f"ℹ️ {icon} <b>{label}</b> — aucune nouvelle annonce ({already} déjà vues)."))
+            total_sent += sent
+        _run_state["last_run_at"]   = datetime.now(ZoneInfo("Europe/Paris"))
+        _run_state["last_run_sent"] = total_sent
+    finally:
+        conn.close()
+
+
 def run_on_demand_search(scraper, chat_id: str, text: str) -> None:
     try:
-        idx = int(text.strip()) - 1
+        idx = int(text.strip())
     except ValueError:
         return
+
+    if idx == 0:
+        run_on_demand_search_all(scraper)
+        return
+
+    idx -= 1
     if idx < 0 or idx >= len(SEARCH_URLS):
-        _save_msg_id(_tg.send(scraper, f"Numéro invalide (1–{len(SEARCH_URLS)})."))
+        _save_msg_id(_tg.send(scraper, f"Numéro invalide (0–{len(SEARCH_URLS)})."))
         return
 
     url  = SEARCH_URLS[idx]

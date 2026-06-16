@@ -51,8 +51,9 @@ if __name__ == "__main__":
                 lambda chat_id, text: core.run_on_demand_search(scraper, chat_id, text),
             ),
             kwargs={
-                "on_help":    lambda: core.send_help(scraper),
-                "on_cleandb": lambda: core.clean_db(scraper),
+                "on_help":      lambda: core.send_help(scraper),
+                "on_cleandb":   lambda: core.clean_db(scraper),
+                "on_searchall": lambda: core.run_on_demand_search_all(scraper),
             },
             daemon=True,
         )
@@ -73,7 +74,7 @@ if __name__ == "__main__":
         f"Prochain run à la prochaine heure pile (08h-22h)"
     )
     if _tg._TELEGRAM_ENABLED:
-        startup_msg += "\n\nCommandes disponibles :\n/health — état du service\n/search — lancer une recherche\n/cleandb — vider la base\n/help — aide"
+        startup_msg += "\n\nCommandes disponibles :\n/health — état du service\n/search — lancer une recherche (menu)\n/searchall — toutes les recherches\n/cleandb — vider la base\n/help — aide"
     core.broadcast(scraper, startup_msg)
 
     logger.info("Scheduler started (%s) — running initial search then hourly 08:00-22:00 Paris time", _REPLICA)
