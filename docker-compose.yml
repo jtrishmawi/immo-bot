@@ -13,7 +13,12 @@ services:
       - DEBUG=${DEBUG:-false}
       - SEARCH_URL_1=${SEARCH_URL_1:-}
       - SEARCH_URL_2=${SEARCH_URL_2:-}
-      # Add SEARCH_URL_3 etc. for additional searches
+      - SEARCH_URL_3=${SEARCH_URL_3:-}
+      - SEARCH_URL_4=${SEARCH_URL_4:-}
+      - SEARCH_URL_5=${SEARCH_URL_5:-}
+      - SEARCH_URL_6=${SEARCH_URL_6:-}
+      - SEARCH_URL_7=${SEARCH_URL_7:-}
+      - SEARCH_URL_8=${SEARCH_URL_8:-}
     volumes:
       - notifier_data:/app/data
     depends_on:
