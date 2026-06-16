@@ -386,5 +386,15 @@ def fetch_listings(scraper, base_url: str, max_pages: int = 3) -> tuple[list[dic
         results.extend(items)
         time.sleep(2)
 
-    logger.info("[PAP] collected %d listings total", len(results))
-    return results, valid_cities
+    # Deduplicate by ID — PAP repeats listings across pages
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for item in results:
+        if item["id"] not in seen:
+            seen.add(item["id"])
+            deduped.append(item)
+    if len(deduped) < len(results):
+        logger.info("pap: removed %d duplicate listing(s)", len(results) - len(deduped))
+
+    logger.info("[PAP] collected %d listings total", len(deduped))
+    return deduped, valid_cities
