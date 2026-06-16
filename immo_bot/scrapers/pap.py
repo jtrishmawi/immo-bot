@@ -194,12 +194,23 @@ def _parse_html(html: str) -> tuple[list[dict], str]:
     cards = [c for c in soup.select("div.search-list-item-alt")
              if c.select_one("[data-annonce]")]
 
-    if not cards:
+    # PAP injects alt/nearby listings after a "Signer un contrat" divider card.
+    # Listing cards have data-piano-sp-click on the div; the divider does not.
+    # Stop at the divider — only process real in-city results before it.
+    real_cards: list = []
+    for card in soup.select("div.search-list-item-alt"):
+        if not card.get("data-piano-sp-click"):
+            if "Signer un contrat" in card.get_text():
+                break   # hard stop — everything past here is alt
+            continue    # skip other non-listing promo cards
+        real_cards.append(card)
+
+    if not real_cards:
         logger.warning("pap: no listing cards found — HTML structure may have changed")
         return [], h1_text
 
     results = []
-    for card in cards:
+    for card in real_cards:
         try:
             a_title = card.select_one("a.item-title")
             lid     = a_title.get("name") if a_title else None
@@ -225,6 +236,17 @@ def _parse_html(html: str) -> tuple[list[dict], str]:
             zip_m     = re.search(r"\((\d{5})\)", city_raw)
             zip_code  = zip_m.group(1) if zip_m else ""
             city      = re.sub(r"\s*\(\d{5}\)", "", city_raw).strip()
+
+            # data-gaq "action" encodes distance: "Consulter … - 0km" = in-city
+            gaq_el = card.select_one("[data-gaq]")
+            if gaq_el:
+                try:
+                    gaq = json.loads(gaq_el.get("data-gaq", "{}"))
+                    m_km = re.search(r"-\s*(\d+)km", gaq.get("action", ""))
+                    if m_km and int(m_km.group(1)) > 0:
+                        is_nearby = True
+                except Exception:
+                    pass
 
             # Tags: "3 pièces", "76 m²", etc.
             rooms = space = None
