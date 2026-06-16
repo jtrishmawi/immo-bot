@@ -174,11 +174,14 @@ def _parse_html(html: str) -> list[dict]:
             price     = float(pm.group(1)) if pm else None
 
             # City: "Poissy" or "Saint-Leu-La-Forêt (95320)"
-            city_el  = card.select_one("span.h1")
-            city_raw = city_el.get_text(strip=True) if city_el else ""
-            zip_m    = re.search(r"\((\d{5})\)", city_raw)
-            zip_code = zip_m.group(1) if zip_m else ""
-            city     = re.sub(r"\s*\(\d{5}\)", "", city_raw).strip()
+            # PAP injects nearby listings with suffix: "Annecy (74000)à 16km de Paris"
+            city_el   = card.select_one("span.h1")
+            city_raw  = city_el.get_text(strip=True) if city_el else ""
+            is_nearby = bool(re.search(r"\d+\s*km\s+de\s+", city_raw))
+            city_raw  = re.sub(r"\s*à\s+\d+.*", "", city_raw)  # strip distance suffix
+            zip_m     = re.search(r"\((\d{5})\)", city_raw)
+            zip_code  = zip_m.group(1) if zip_m else ""
+            city      = re.sub(r"\s*\(\d{5}\)", "", city_raw).strip()
 
             # Tags: "3 pièces", "76 m²", etc.
             rooms = space = None
@@ -197,20 +200,81 @@ def _parse_html(html: str) -> list[dict]:
 
             if lid:
                 results.append({
-                    "id":       str(lid),
-                    "title":    "",
-                    "price":    price,
-                    "city":     city,
-                    "zip_code": zip_code,
-                    "rooms":    rooms,
-                    "space":    space,
-                    "url":      url,
-                    "photo":    photo,
+                    "id":        str(lid),
+                    "title":     "",
+                    "price":     price,
+                    "city":      city,
+                    "zip_code":  zip_code,
+                    "rooms":     rooms,
+                    "space":     space,
+                    "url":       url,
+                    "photo":     photo,
+                    "is_nearby": is_nearby,
                 })
         except Exception as e:
             logger.debug("pap card parse error: %s", e)
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Client-side criteria filter
+# ---------------------------------------------------------------------------
+
+def filter_listings(items: list[dict], params: dict) -> list[dict]:
+    """Drop listings that don't match the criteria encoded in params.
+
+    PAP often injects 'similar' listings outside the requested price/surface/
+    rooms range. We re-apply the same constraints client-side so only exact
+    matches get notified.
+    """
+    prix_max    = int(params["prix_max"])    if params.get("prix_max")    else None
+    prix_min    = int(params["prix_min"])    if params.get("prix_min")    else None
+    surface_min = int(params["surface_min"]) if params.get("surface_min") else None
+    surface_max = int(params["surface_max"]) if params.get("surface_max") else None
+    pieces_min  = int(params["nb_pieces_min"]) if params.get("nb_pieces_min") else None
+    pieces_max  = int(params["nb_pieces_max"]) if params.get("nb_pieces_max") else None
+
+    city_label = params.get("city_label", "").lower() if params.get("city_label") else None
+
+    kept = []
+    for item in items:
+        price  = item.get("price")
+        space  = item.get("space")
+        rooms  = item.get("rooms")
+
+        if item.get("is_nearby"):
+            logger.debug("pap filter: drop %s nearby listing (%s)", item.get("id"), item.get("city"))
+            continue
+        if city_label and item.get("city") and city_label not in item.get("city", "").lower():
+            logger.debug("pap filter: drop %s city %r not in %r", item.get("id"), item.get("city"), city_label)
+            continue
+
+        if prix_max    is not None and price  is not None and price  > prix_max:
+            logger.debug("pap filter: drop %s price %.0f > %d", item.get("id"), price, prix_max)
+            continue
+        if prix_min    is not None and price  is not None and price  < prix_min:
+            logger.debug("pap filter: drop %s price %.0f < %d", item.get("id"), price, prix_min)
+            continue
+        if surface_min is not None and space  is not None and space  < surface_min:
+            logger.debug("pap filter: drop %s space %d < %d", item.get("id"), space, surface_min)
+            continue
+        if surface_max is not None and space  is not None and space  > surface_max:
+            logger.debug("pap filter: drop %s space %d > %d", item.get("id"), space, surface_max)
+            continue
+        if pieces_min  is not None and rooms  is not None and rooms  < pieces_min:
+            logger.debug("pap filter: drop %s rooms %d < %d", item.get("id"), rooms, pieces_min)
+            continue
+        if pieces_max  is not None and rooms  is not None and rooms  > pieces_max:
+            logger.debug("pap filter: drop %s rooms %d > %d", item.get("id"), rooms, pieces_max)
+            continue
+
+        kept.append(item)
+
+    dropped = len(items) - len(kept)
+    if dropped:
+        logger.info("pap filter: dropped %d out-of-criteria listing(s) (%d kept)", dropped, len(kept))
+    return kept
 
 
 # ---------------------------------------------------------------------------

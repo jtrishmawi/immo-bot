@@ -390,7 +390,7 @@ def run_on_demand_search(scraper, chat_id: str, text: str) -> None:
     conn = init_db()
     try:
         if site == "pap":
-            items     = _pap.fetch_listings(scraper, search_url)
+            items     = _pap.filter_listings(_pap.fetch_listings(scraper, search_url), params)
             new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
             already   = len(items) - len(new_items)
             sent      = _send_new_listings_pap(scraper, conn, new_items, label, broadcast_mode=False)
@@ -473,7 +473,7 @@ def main():
             logger.info("Recherche PAP %s : %s", label, search_url)
             debug_send(scraper, f"Fetching {label}…")
 
-            items     = _pap.fetch_listings(scraper, search_url)
+            items     = _pap.filter_listings(_pap.fetch_listings(scraper, search_url), params)
             new_items = [i for i in items if not is_sent(conn, str(i.get("id")))]
             already   = len(items) - len(new_items)
             logger.info("[%s] %d new, %d already seen", label, len(new_items), already)
