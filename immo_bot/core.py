@@ -327,13 +327,15 @@ def send_health(scraper) -> None:
 
 
 def send_search_menu(scraper) -> None:
-    lines = ["🔍 <b>Quelle recherche lancer ?</b>"]
+    lines = ["🔍 <b>Quelle recherche lancer ?</b>\n"]
     for i, url in enumerate(SEARCH_URLS, 1):
         if _detect_site(url) == "pap":
             label, icon = _label_from_params_pap(_pap.parse_url(url))
+            source = "PAP"
         else:
             label, icon = _label_from_params(parse_url(url))
-        lines.append(f"{i}. {icon} {label}")
+            source = "Seloger"
+        lines.append(f'{i}. {icon} {label} — <a href="{url}">{source}</a>')
     lines.append("\nRépondez avec le numéro.")
     _tg.send(scraper, "\n".join(lines))
 
